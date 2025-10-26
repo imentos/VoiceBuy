@@ -1,0 +1,54 @@
+{
+  "products": [
+    {
+      "id": 1,
+      "name": "Fresh Milk",
+      "price": 3.99
+    },
+    {
+      "id": 2,
+      "name": "Whole Wheat Bread",
+      "price": 2.49
+    },
+    {
+      "id": 3,
+      "name": "Organic Eggs (12-pack)",
+      "price": 5.99
+    },
+    {
+      "id": 4,
+      "name": "Bananas (bunch)",
+      "price": 1.99
+    },
+    {
+      "id": 5,
+      "name": "Ground Coffee",
+      "price": 8.99
+    },
+    {
+      "id": 6,
+      "name": "Orange Juice",
+      "price": 4.49
+    },
+    {
+      "id": 7,
+      "name": "Greek Yogurt",
+      "price": 3.49
+    },
+    {
+      "id": 8,
+      "name": "Chicken Breast",
+      "price": 7.99
+    },
+    {
+      "id": 9,
+      "name": "Baby Carrots",
+      "price": 2.99
+    },
+    {
+      "id": 10,
+      "name": "Pasta Sauce",
+      "price": 3.99
+    }
+  ]
+}
