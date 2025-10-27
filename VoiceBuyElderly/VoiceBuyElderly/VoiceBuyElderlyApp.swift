@@ -40,8 +40,21 @@ enum AppRoute: Hashable {
     case complete
 }
 
+struct Product: Codable, Identifiable {
+    let id: Int
+    let name: String
+    let price: Double
+}
+
+struct OrderItem: Identifiable {
+    let id = UUID()
+    let product: Product
+    var quantity: Int
+}
+
+
 // MARK: - ViewModel
-class VoiceViewModel: ObservableObject {
+class VoiceViewModel: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
 //    var objectWillChange: ObservableObjectPublisher
     
     @Published var recognizedText = ""
@@ -49,44 +62,127 @@ class VoiceViewModel: ObservableObject {
     private var speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionTask: SFSpeechRecognitionTask?
     private var audioEngine = AVAudioEngine()
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    
+    @Published var orderItems: [OrderItem] = []
+    @Published var products: [Product] = []
+    @Published var isRecording = false
+    
+    override init() {
+        super.init()
+        speechRecognizer?.delegate = self
+        loadProducts()
+    }
+
+    
+    private func loadProducts() {
+        if let url = Bundle.main.url(forResource: "products", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode([Product].self, from: data) {
+            products = decoded
+        }
+    }
     
     func startListening() {
-        recognizedText = ""
-        
+        recognizedText = ""  // reset before each new recognition
+        orderItems = []
+        isRecording = true
+
+        // Configure audio session
         let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
-        try? audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-        
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        let inputNode = audioEngine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-        
-        inputNode.removeTap(onBus: 0) // avoid duplicate taps
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
-            request.append(buffer)
+        do {
+            try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("Audio session error: \(error.localizedDescription)")
         }
-        
-        audioEngine.prepare()
-        try? audioEngine.start()
-        
-        recognitionTask?.cancel()
-        recognitionTask = speechRecognizer?.recognitionTask(with: request) { result, error in
+
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else { return }
+
+        let inputNode = audioEngine.inputNode
+        recognitionRequest.shouldReportPartialResults = true
+
+        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { result, error in
             if let result = result {
                 DispatchQueue.main.async {
                     self.recognizedText = result.bestTranscription.formattedString
                 }
+                if result.isFinal {
+                    DispatchQueue.main.async {
+                        self.isRecording = false
+                        self.finishRecognition()
+                    }
+                }
             }
-            if error != nil {
-                self.audioEngine.stop()
-                inputNode.removeTap(onBus: 0)
+
+            if let error = error {
+                print("Recognition error: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self.isRecording = false
+                    self.finishRecognition()
+                }
             }
+        }
+
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+            recognitionRequest.append(buffer)
+        }
+
+        audioEngine.prepare()
+        do {
+            try audioEngine.start()
+        } catch {
+            print("Audio engine start error: \(error.localizedDescription)")
         }
     }
 
     func stopListening() {
+        print("Stopping recording…")
         audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        recognitionTask?.cancel()
+        recognitionRequest?.endAudio()
+        // Delay parsing to let recognizer flush results
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.finishRecognition()
+        }
+    }
+
+    private func finishRecognition() {
+        guard !recognizedText.isEmpty else {
+            print("⚠️ No text recognized — skipping parse.")
+            return
+        }
+        parseOrder(from: recognizedText)
+    }
+    
+    func parseOrder(from text: String) {
+        let lowerText = text.lowercased()
+        var items: [OrderItem] = []
+
+        for product in products {
+            if lowerText.contains(product.name.lowercased()) {
+                let quantity = extractQuantity(from: lowerText, for: product.name)
+                items.append(OrderItem(product: product, quantity: quantity))
+            }
+        }
+
+        orderItems = items
+    }
+
+    private func extractQuantity(from text: String, for productName: String) -> Int {
+        let tokens = text.split(separator: " ")
+        for (i, token) in tokens.enumerated() {
+            if token.lowercased() == productName.lowercased() {
+                if i > 0, let q = Int(tokens[i - 1]) { return q }
+                if i < tokens.count - 1, let q = Int(tokens[i + 1]) { return q }
+            }
+        }
+        return 1
+    }
+
+    func totalAmount() -> Double {
+        orderItems.reduce(0) { $0 + Double($1.quantity) * $1.product.price }
     }
     
     func speak(_ text: String) {
